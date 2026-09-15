@@ -1,0 +1,186 @@
+* { box-sizing: border-box; }
+
+:root { color-scheme: dark; }
+
+body {
+  margin: 0;
+  background: #0d0f12;
+  color: #eee;
+  font: 14px/1.5 sans-serif;
+}
+
+#tool {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 24px;
+  text-transform: lowercase;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+h1, h2, p { margin-top: 0; }
+h1 { margin-bottom: 0; font-size: 20px; }
+h2 { margin-bottom: 10px; font-size: 14px; }
+small, .muted { color: #999; }
+
+.topbar,
+.brand,
+.view-nav,
+.device-row,
+.device-select,
+.rate-heading,
+.actions,
+.check-row,
+.progress-head {
+  display: flex;
+  align-items: center;
+}
+
+.topbar {
+  justify-content: space-between;
+  gap: 20px;
+  padding-bottom: 12px;
+  margin-bottom: 18px;
+}
+
+.brand { gap: 10px; align-items: baseline; }
+.view-nav { gap: 7px; }
+.device-row { justify-content: space-between; gap: 16px; margin-bottom: 8px; }
+.device-select { gap: 10px; min-width: 0; }
+
+.label {
+  color: #999;
+  font-size: 11px;
+}
+
+button,
+select,
+input { font: inherit; }
+
+button,
+select {
+  color: inherit;
+  background: #15171a;
+  border: 1px solid #333;
+  border-radius: 2px;
+  padding: 6px 9px;
+}
+
+button { cursor: pointer; }
+button:disabled { opacity: .45; cursor: default; }
+select { min-width: 270px; }
+
+.nav-link,
+.text-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #aaa;
+}
+
+.nav-link.active { color: #fff; text-decoration: underline; text-underline-offset: 4px; }
+.text-button { text-decoration: underline; }
+
+.instructions {
+  color: #aaa;
+  margin: 0 0 20px;
+}
+
+.install-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.install-option {
+  min-height: 86px;
+  padding: 14px;
+  text-align: left;
+  background: transparent;
+  border-color: #333;
+}
+
+.install-option.selected { border-color: #fff; }
+.install-option strong,
+.install-option small { display: block; }
+.install-option small { margin-top: 5px; font-weight: 400; }
+
+.install-button { margin-top: 12px; }
+.backup-link, .error-line { margin-top: 10px; }
+.error-line { color: #d99; }
+
+.operation-progress { margin-top: 16px; }
+.progress-head { justify-content: space-between; gap: 16px; margin-bottom: 4px; color: #aaa; font-size: 12px; }
+.operation-progress progress { width: 100%; height: 8px; }
+
+.cfg-view { margin-top: 0; }
+.rate-section { margin-top: 24px; }
+.smoothing-section { margin-top: 28px; }
+
+.rate-heading { justify-content: space-between; align-items: baseline; gap: 20px; }
+.rate-number { font-size: 38px; line-height: 1; margin-top: 4px; }
+.rate-number span { font-size: 14px; color: #999; }
+.rate-actual { text-align: right; color: #999; font-size: 12px; }
+.rate-actual strong { color: #eee; font-size: 18px; }
+
+input[type="range"] {
+  width: 100%;
+  accent-color: #eee;
+  touch-action: none;
+}
+input[type="checkbox"] { accent-color: #eee; }
+
+.poll-slider { margin-top: 18px; }
+.range-labels { display: flex; justify-content: space-between; color: #888; font-size: 11px; }
+
+.graph-block { margin-top: 18px; }
+.graph { display: block; width: 100%; height: auto; }
+.graph-guide { stroke: #444; stroke-width: 1; }
+.graph-line { fill: none; stroke: #eee; stroke-width: 1.5; }
+
+.ema-control {
+  display: grid;
+  grid-template-columns: auto 1fr auto minmax(180px, 3fr) auto;
+  gap: 10px;
+  align-items: center;
+  margin: 10px 0;
+}
+
+.control-row {
+  display: grid;
+  grid-template-columns: 110px 42px 1fr;
+  gap: 10px;
+  align-items: center;
+  margin: 10px 0;
+}
+.control-row.compact { grid-template-columns: 140px auto; justify-content: start; }
+.control-row strong { text-align: right; }
+.check-row { gap: 7px; margin: 12px 0; }
+.actions { gap: 8px; flex-wrap: wrap; }
+.config-actions { margin-top: 14px; }
+.unsaved-status { margin-left: auto; }
+
+.log-lines {
+  margin-top: 24px;
+  padding-top: 14px;
+  border-top: 1px solid #2a2a2a;
+  max-height: 15em;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+@media (max-width: 700px) {
+  #tool { padding: 18px; }
+  .topbar { align-items: flex-start; }
+  .brand { flex-direction: column; gap: 1px; }
+  .device-row { align-items: flex-start; }
+  .device-select { align-items: flex-start; flex-direction: column; gap: 4px; flex: 1; }
+  select { min-width: 0; width: 100%; }
+  .install-options { grid-template-columns: 1fr; }
+  .ema-control { grid-template-columns: 1fr auto; }
+  .ema-control .ema-spacer { display: none; }
+  .ema-control input { grid-column: 1 / -1; }
+  .control-row { grid-template-columns: 90px 36px 1fr; }
+}
