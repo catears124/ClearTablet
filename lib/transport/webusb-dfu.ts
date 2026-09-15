@@ -1,10 +1,11 @@
 /**
  * DfuSe client over WebUSB.
  *
- * The browser transport intentionally follows the same state-machine shape as
- * dfu-util/DfuSe: explicitly select alternate setting 0, force dfuIDLE before
- * special commands, honour bwPollTimeout, and never trust an erase until the
- * caller has read it back.
+ * The browser transport follows dfu-util's DfuSe state-machine shape rather
+ * than treating a successful USB control transfer as proof that the command
+ * executed. In particular, abort-to-idle is a real DFU_ABORT + GETSTATUS
+ * handshake, and special commands are accepted only after the device reports
+ * dfuDNBUSY or dfuDNLOAD-IDLE.
  */
 
 import type { DeviceAdapter } from "../devices/types";
@@ -134,8 +135,6 @@ export class WebUsbDfuDevice {
     }
     try {
       await this.device.claimInterface(this.interfaceNumber);
-      // DfuSe internal flash is alternate setting 0. Being explicit here
-      // avoids relying on whichever alternate a host/previous tool left active.
       await this.device.selectAlternateInterface(this.interfaceNumber, 0);
     } catch (error) {
       throw new DfuError(
@@ -219,6 +218,11 @@ export class WebUsbDfuDevice {
     return new Uint8Array(result.data.buffer);
   }
 
+  private async sleep(ms: number): Promise<void> {
+    if (ms <= 0) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, ms));
+  }
+
   async getStatus(): Promise<DfuStatus> {
     const raw = await this.controlIn(REQ_GETSTATUS, 0, 6);
     if (raw.length < 6) {
@@ -247,68 +251,113 @@ export class WebUsbDfuDevice {
     await this.controlOut(REQ_ABORT, 0);
   }
 
+  /**
+   * Match dfu-util's abort-to-idle handshake. The previous implementation
+   * merely observed dfuIDLE and returned, which left vendor-private command
+   * state untouched on bootloaders that report idle without fully resetting
+   * their DfuSe transaction state.
+   */
   async toIdle(): Promise<void> {
-    let state = await this.getState();
-    if (state === DFU_STATE.dfuError) {
-      await this.clearStatus();
-      state = await this.getState();
-    }
-    if (state !== DFU_STATE.dfuIdle) {
-      await this.abort();
-      state = await this.getState();
-    }
-    if (state !== DFU_STATE.dfuIdle) {
-      throw new DfuError(`Cannot reach dfuIDLE; device is in state ${state}`, { state });
-    }
-  }
+    let status = await this.getStatus();
 
-  /** Poll until a DfuSe download/special command has actually completed. */
-  private async finish(timeoutMs: number): Promise<DfuStatus> {
-    const deadline = Date.now() + timeoutMs;
-    for (;;) {
-      const status = await this.getStatus();
+    if (status.state === DFU_STATE.dfuError || status.status !== 0) {
+      await this.clearStatus();
+      status = await this.getStatus();
       if (status.status !== 0) {
         throw new DfuError(`DFU error status ${status.status} in state ${status.state}`, {
           state: status.state,
           status: status.status,
         });
       }
-      if (status.state === DFU_STATE.dfuDnloadIdle || status.state === DFU_STATE.dfuIdle) {
-        return status;
-      }
-      if (status.state !== DFU_STATE.dfuDnbusy && status.state !== DFU_STATE.dfuDnloadSync) {
-        throw new DfuError(`Unexpected DFU state ${status.state}`, { state: status.state });
+    }
+
+    // dfu-util's dfu_abort_to_idle() sends ABORT even when the device already
+    // reports dfuIDLE, then proves the transition with GETSTATUS.
+    await this.abort();
+    status = await this.getStatus();
+
+    if (status.status !== 0 || status.state !== DFU_STATE.dfuIdle) {
+      throw new DfuError(
+        `Failed to enter dfuIDLE after abort; state ${status.state}, status ${status.status}`,
+        { state: status.state, status: status.status },
+      );
+    }
+
+    await this.sleep(status.pollTimeoutMs);
+  }
+
+  /**
+   * Poll a DfuSe DNLOAD transaction like dfu-util: the first GETSTATUS must
+   * report either dfuDNBUSY or dfuDNLOAD-IDLE, and polling continues only
+   * while the device is busy. SET_ADDRESS intentionally ignores a bogus
+   * non-zero bwPollTimeout, matching dfu-util's compatibility behavior.
+   */
+  private async finishDownloadCommand(
+    name: "SET_ADDRESS" | "ERASE_PAGE" | "WRITE",
+    timeoutMs: number,
+  ): Promise<DfuStatus> {
+    const deadline = Date.now() + timeoutMs;
+    let firstPoll = true;
+
+    for (;;) {
+      const status = await this.getStatus();
+      if (status.status !== 0) {
+        throw new DfuError(`DFU ${name} failed with status ${status.status} in state ${status.state}`, {
+          state: status.state,
+          status: status.status,
+        });
       }
 
-      const wait = status.pollTimeoutMs || 5;
-      const remaining = deadline - Date.now();
-      if (remaining <= 0 || wait > remaining) {
-        throw new DfuError(
-          `Timed out waiting for the DFU operation to complete (device requested ${wait} ms poll delay)`,
-          { state: status.state },
-        );
+      if (firstPoll) {
+        firstPoll = false;
+        if (status.state !== DFU_STATE.dfuDnbusy && status.state !== DFU_STATE.dfuDnloadIdle) {
+          throw new DfuError(
+            `Wrong DFU state after ${name}: ${status.state}; expected dfuDNBUSY or dfuDNLOAD-IDLE`,
+            { state: status.state, status: status.status },
+          );
+        }
       }
-      await new Promise<void>((resolve) => setTimeout(resolve, wait));
+
+      if (status.state === DFU_STATE.dfuDnloadIdle) {
+        return status;
+      }
+      if (status.state !== DFU_STATE.dfuDnbusy) {
+        throw new DfuError(`Unexpected DFU state ${status.state} while completing ${name}`, {
+          state: status.state,
+          status: status.status,
+        });
+      }
+
+      const wait = name === "SET_ADDRESS" ? 0 : status.pollTimeoutMs;
+      if (Date.now() + wait > deadline) {
+        throw new DfuError(`Timed out waiting for ${name} to complete`, { state: status.state });
+      }
+      await this.sleep(wait);
     }
   }
 
-  private async command(payload: Uint8Array, timeoutMs: number): Promise<void> {
+  private async specialCommand(
+    payload: Uint8Array,
+    name: "SET_ADDRESS" | "ERASE_PAGE",
+    timeoutMs: number,
+  ): Promise<void> {
     await this.controlOut(REQ_DNLOAD, 0, payload);
-    await this.finish(timeoutMs);
+    await this.finishDownloadCommand(name, timeoutMs);
   }
 
   async setAddress(address: number): Promise<void> {
-    await this.command(buildSetAddressPayload(address), DOWNLOAD_TIMEOUT_MS);
+    await this.specialCommand(buildSetAddressPayload(address), "SET_ADDRESS", DOWNLOAD_TIMEOUT_MS);
   }
 
   async erasePage(address: number): Promise<void> {
     if (address % 0x400 !== 0) {
       throw new DfuError(`Erase address 0x${address.toString(16)} is not page aligned`);
     }
-    // Some GD32 DFU implementations report a successful no-op when a special
-    // command is issued from dfuDNLOAD-IDLE. Normalize state before every erase.
+
+    // Start each erase from a proven clean DFU state. This is intentionally a
+    // real abort-to-idle handshake, not just a GETSTATE observation.
     await this.toIdle();
-    await this.command(buildErasePayload(address), ERASE_TIMEOUT_MS);
+    await this.specialCommand(buildErasePayload(address), "ERASE_PAGE", ERASE_TIMEOUT_MS);
   }
 
   async read(address: number, length: number, onProgress?: (progress: DfuProgress) => void): Promise<Uint8Array> {
@@ -344,7 +393,7 @@ export class WebUsbDfuDevice {
     await this.setAddress(address);
     await this.toIdle();
     await this.controlOut(REQ_DNLOAD, BLOCK_DATA, data);
-    await this.finish(DOWNLOAD_TIMEOUT_MS);
+    await this.finishDownloadCommand("WRITE", DOWNLOAD_TIMEOUT_MS);
     await this.toIdle();
   }
 }
