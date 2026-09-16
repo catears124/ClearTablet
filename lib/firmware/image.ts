@@ -111,6 +111,7 @@ function findUtf16LeBuildId(app: Uint8Array, buildId: string): string | null {
 export type InstalledApplicationVerdict =
   | { status: "stock"; sha256: string; buildId: string }
   | { status: "patched"; sha256: string; buildId: string }
+  | { status: "recoverable"; sha256: string; buildId: string }
   | { status: "legacy"; sha256: string; buildId: string }
   | { status: "unsupported"; sha256: string; buildId: string | null; reason: string };
 
@@ -120,9 +121,12 @@ export type InstalledApplicationVerdict =
  * official builds can leave inert tail data there after GAOMON's updater writes
  * the shorter current application.
  *
- * A legacy image is eligible for the in-site factory update only when it
- * contains the same firmware-family build string and an older YYMMDD suffix.
- * Unknown or newer images are refused rather than being force-downgraded.
+ * A same-family image whose build is not newer than the pinned build is
+ * recoverable from the already-verified full backup. Custom installation is
+ * built from the exact pinned factory image and written in one erase/program
+ * pass; it must never stage a factory write and then attempt another erase in
+ * the same DFU session. Newer and unknown images are still refused rather than
+ * being force-downgraded.
  */
 export async function inspectInstalledApplication(
   adapter: DeviceAdapter,
@@ -150,8 +154,8 @@ export async function inspectInstalledApplication(
   const detectedBuildId = findUtf16LeBuildId(installedApp, adapter.firmware.buildId);
   const expected = /^(.*_)(\d{6})$/.exec(adapter.firmware.buildId);
   const detected = detectedBuildId ? /^(.*_)(\d{6})$/.exec(detectedBuildId) : null;
-  if (expected && detected && expected[1] === detected[1] && Number(detected[2]) < Number(expected[2])) {
-    return { status: "legacy", sha256, buildId: detectedBuildId! };
+  if (expected && detected && expected[1] === detected[1] && Number(detected[2]) <= Number(expected[2])) {
+    return { status: "recoverable", sha256, buildId: detectedBuildId! };
   }
 
   return {

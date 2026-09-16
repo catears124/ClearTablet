@@ -84,6 +84,7 @@ export class WebUsbDfuDevice {
   private readonly interfaceNumber: number;
   private readonly fallbackTransferSize: number;
   private resolvedTransferSize: number;
+  private wroteInSession = false;
 
   private constructor(device: USBDevice, adapter: DeviceAdapter) {
     this.device = device;
@@ -145,6 +146,7 @@ export class WebUsbDfuDevice {
       );
     }
     this.resolvedTransferSize = await this.readFunctionalTransferSize();
+    this.wroteInSession = false;
     await this.toIdle();
   }
 
@@ -271,8 +273,6 @@ export class WebUsbDfuDevice {
       }
     }
 
-    // dfu-util's dfu_abort_to_idle() sends ABORT even when the device already
-    // reports dfuIDLE, then proves the transition with GETSTATUS.
     await this.abort();
     status = await this.getStatus();
 
@@ -286,12 +286,6 @@ export class WebUsbDfuDevice {
     await this.sleep(status.pollTimeoutMs);
   }
 
-  /**
-   * Poll a DfuSe DNLOAD transaction like dfu-util: the first GETSTATUS must
-   * report either dfuDNBUSY or dfuDNLOAD-IDLE, and polling continues only
-   * while the device is busy. SET_ADDRESS intentionally ignores a bogus
-   * non-zero bwPollTimeout, matching dfu-util's compatibility behavior.
-   */
   private async finishDownloadCommand(
     name: "SET_ADDRESS" | "ERASE_PAGE" | "WRITE",
     timeoutMs: number,
@@ -353,9 +347,12 @@ export class WebUsbDfuDevice {
     if (address % 0x400 !== 0) {
       throw new DfuError(`Erase address 0x${address.toString(16)} is not page aligned`);
     }
+    if (this.wroteInSession) {
+      throw new DfuError(
+        "Refusing to erase after programming in the same DFU session. Re-enter DFU before starting another flash operation.",
+      );
+    }
 
-    // Start each erase from a proven clean DFU state. This is intentionally a
-    // real abort-to-idle handshake, not just a GETSTATE observation.
     await this.toIdle();
     await this.specialCommand(buildErasePayload(address), "ERASE_PAGE", ERASE_TIMEOUT_MS);
   }
@@ -394,6 +391,7 @@ export class WebUsbDfuDevice {
     await this.toIdle();
     await this.controlOut(REQ_DNLOAD, BLOCK_DATA, data);
     await this.finishDownloadCommand("WRITE", DOWNLOAD_TIMEOUT_MS);
+    this.wroteInSession = true;
     await this.toIdle();
   }
 }
