@@ -1,4 +1,5 @@
 import { DebugDownload } from "./DebugDownload";
+import { FlashCounter } from "./FlashCounter";
 import { FlashTool } from "./FlashTool";
 
 export default function Home() {
@@ -7,6 +8,7 @@ export default function Home() {
   return (
     <>
       <FlashTool />
+      <FlashCounter buildSha={buildSha} />
       <DebugDownload buildSha={buildSha} />
     </>
   );
